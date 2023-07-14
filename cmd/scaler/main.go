@@ -14,8 +14,10 @@ limitations under the License.
 package main
 
 import (
+	"io"
 	"log"
 	"net"
+	"os"
 
 	"google.golang.org/grpc"
 
@@ -23,9 +25,26 @@ import (
 	pb "github.com/AliyunContainerService/scaler/proto"
 )
 
-func main() {
-	log.SetFlags(log.Ldate | log.LstdFlags)
+func init() {
 
+}
+
+func main() {
+	// log config
+	f, err := os.OpenFile("/app/log/scaler.log", os.O_CREATE|os.O_APPEND|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return
+	}
+	defer func() {
+		f.Close()
+	}()
+	multiWriter := io.MultiWriter(os.Stdout, f)
+	log.SetOutput(multiWriter)
+
+	// set flag
+	log.SetFlags(log.Ldate | log.Lmicroseconds)
+
+	// grpc server
 	lis, err := net.Listen("tcp", ":9001")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)

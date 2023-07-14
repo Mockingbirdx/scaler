@@ -203,6 +203,9 @@ kubectl logs jobs/serverless-simulaion scaler
 
 # 查看simulator 容器日志:
 kubectl logs jobs/serverless-simulaion serverless-simulator
+
+# 查看当前的数据统计
+kubectl exec jobs/serverless-simulation -c scaler -- curl http://127.0.0.1:9000/
 ```
 
 # 赛题提交说明
