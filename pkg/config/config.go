@@ -19,14 +19,26 @@ type Config struct {
 	ClientAddr           string
 	GcInterval           time.Duration
 	IdleDurationBeforeGC time.Duration
-	//
-	PaInterval time.Duration
+	MaxWaitingNum        int
+	UseFeature           bool
+	IntervalInSec        map[string]int
 }
 
 var DefaultConfig = Config{
 	ClientAddr:           "127.0.0.1:50051",
-	GcInterval:           10 * time.Second,
-	IdleDurationBeforeGC: 5 * time.Minute,
-	//
-	PaInterval: 10 * time.Second,
+	GcInterval:           900 * time.Millisecond,
+	IdleDurationBeforeGC: 9 * time.Second,
+	MaxWaitingNum:        3,
+	UseFeature:           false,
+	IntervalInSec: map[string]int{
+		"nodes1":                      37,
+		"roles1":                      300,
+		"rolebindings1":               300,
+		"certificatesigningrequests1": 300,
+		"csinodes1":                   10,
+		"nodes2":                      37,
+		"roles2":                      300,
+		"rolebindings2":               300,
+		"certificatesigningrequests2": 300,
+	},
 }

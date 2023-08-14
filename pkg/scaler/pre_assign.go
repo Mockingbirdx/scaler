@@ -6,6 +6,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"log"
+	// "sync"
+	// "github.com/AliyunContainerService/scaler/pkg/feature"
 	"time"
 
 	"github.com/AliyunContainerService/scaler/pkg/model"
@@ -13,7 +15,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *Simple) PreAssign(ctx context.Context) error {
+func (s *Simple) PreAssign(ctx context.Context, sleep_duration time.Duration) error {
+	// sleep
+	time.Sleep(sleep_duration)
+
 	// START 调度 App Request
 	log.Printf("Assign      %s [PreAssign]", s.metaData.GetKey())
 
@@ -60,15 +65,17 @@ func (s *Simple) PreAssign(ctx context.Context) error {
 	return nil
 }
 
-func (s *Simple) paLoop() {
-	log.Printf("pre assign loop for app: %s is started", s.metaData.Key)
-	ticker := time.NewTicker(s.config.PaInterval)
-	for range ticker.C {
-		s.mu.Lock()
-		// there is active instance and no idle instance
-		if len(s.instances) > s.idleInstance.Len() && s.idleInstance.Len() == 0 {
-			s.PreAssign(context.Background())
-		}
-		s.mu.Unlock()
-	}
-}
+// func (s *Simple) Cycle(ctx context.Context, app *feature.App) {
+// 	now := time.Now()
+
+// 	s.cycle_mu.Lock()
+// 	if now.After(s.cycle_time.Add(10 * time.Second)) {
+// 		s.cycle_time = now
+// 		s.cycle_mu.Unlock()
+
+// 		go s.PreAssign(ctx, time.Second*time.Duration(app.CycleInSec))
+// 	} else {
+// 		s.cycle_mu.Unlock()
+// 		return
+// 	}
+// }

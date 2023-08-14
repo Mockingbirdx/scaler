@@ -1,0 +1,1 @@
+docker push registry.cn-hangzhou.aliyuncs.com/lullaby/scaler:v0.0.1

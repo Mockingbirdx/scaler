@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/AliyunContainerService/scaler/pkg/config"
+	"github.com/AliyunContainerService/scaler/pkg/feature"
 	"github.com/AliyunContainerService/scaler/pkg/model"
 	"github.com/AliyunContainerService/scaler/pkg/scaler"
 )
@@ -30,6 +31,7 @@ type Manager struct {
 }
 
 func New(config *config.Config) *Manager {
+	feature.ReadFeature()
 	return &Manager{
 		rw:         sync.RWMutex{},
 		schedulers: make(map[string]scaler.Scaler),

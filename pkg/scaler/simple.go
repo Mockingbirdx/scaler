@@ -17,13 +17,15 @@ import (
 	"container/list"
 	"context"
 	"fmt"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"log"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/AliyunContainerService/scaler/pkg/config"
+	"github.com/AliyunContainerService/scaler/pkg/feature"
 	"github.com/AliyunContainerService/scaler/pkg/model"
 	"github.com/AliyunContainerService/scaler/pkg/platform_client"
 	pb "github.com/AliyunContainerService/scaler/proto"
@@ -38,12 +40,21 @@ type Simple struct {
 	wg             sync.WaitGroup
 	instances      map[string]*model.Instance
 	idleInstance   *list.List
+	// Lock
+	waitingNum int
+	// Feature
+	feature *feature.AppFeature
 	// Exec Times
-	executionDuration float32
-	startTime         map[string]*time.Time
+	// executionDurationInMs float32
+	// startTime             map[string]*time.Time
+
+	// Cycle
+	// cycle_mu   sync.Mutex
+	// cycle_time time.Time
+
 	// AssignTime
-	assignDuration float32
-	lastAssignTime time.Time
+	// assignDuration float32
+	// lastAssignTime time.Time
 }
 
 func New(metaData *model.Meta, config *config.Config) Scaler {
@@ -59,12 +70,28 @@ func New(metaData *model.Meta, config *config.Config) Scaler {
 		wg:             sync.WaitGroup{},
 		instances:      make(map[string]*model.Instance),
 		idleInstance:   list.New(),
+		// Lock
+		waitingNum: 0,
+		// Feature
+		feature: feature.AppFeatures[metaData.Key],
+		// Cycle
+		// cycle_mu:   sync.Mutex{},
+		// cycle_time: time.Now().Add(-60 * time.Second),
 		// Exec Times
-		executionDuration: 0,
-		startTime:         make(map[string]*time.Time),
+		// executionDurationInMs: 0,
+		// startTime:             make(map[string]*time.Time),
 		// AssignTime
-		assignDuration: 0,
-		lastAssignTime: time.Now(),
+		// assignDuration: 0,
+		// lastAssignTime: time.Now(),
+	}
+	if scheduler.feature == nil {
+		scheduler.feature = &feature.AppFeature{
+			Key:              metaData.Key,
+			ExecDurationInMs: 0,
+			InitDurationInMs: 0,
+			CycleInSec:       0,
+			TermInSec:        0,
+		}
 	}
 	log.Printf("New         %s %d %d %s", metaData.GetKey(), metaData.GetMemoryInMb(), metaData.GetTimeoutInSecs(), metaData.GetRuntime())
 	scheduler.wg.Add(1)
@@ -89,17 +116,23 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 
 	s.mu.Lock()
 	// AssignTime
-	assign_duration := float32(time.Since(s.lastAssignTime).Milliseconds())
-	s.lastAssignTime = start
+	// assign_duration := float32(time.Since(s.lastAssignTime).Milliseconds())
+	// s.lastAssignTime = start
+
+	// Cycle
+	// if app := feature.AppFeatures[request.MetaData.Key]; app != nil && app.CycleInSec > 0 {
+	// 	go s.Cycle(context.Background(), app)
+	// }
+
 	if element := s.idleInstance.Front(); element != nil {
-		s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
+		// s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
 		instance := element.Value.(*model.Instance)
 		instance.Busy = true
 		s.idleInstance.Remove(element)
 
 		// Exec Times
-		start_time := time.Now()
-		s.startTime[instanceId] = &start_time
+		// start_time := time.Now()
+		// s.startTime[instanceId] = &start_time
 
 		s.mu.Unlock()
 		instanceId = instance.Id
@@ -112,7 +145,43 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 			},
 			ErrorMessage: nil,
 		}, nil
+	} else if (s.feature.ExecDurationInMs < s.feature.InitDurationInMs || s.feature.ExecDurationInMs < 100) &&
+		len(s.instances) > 0 && s.waitingNum < len(s.instances) && s.waitingNum < s.config.MaxWaitingNum {
+
+		s.waitingNum += 1
+		s.mu.Unlock()
+
+		max_try := int((s.feature.ExecDurationInMs / 10) + 1)
+		for i := 0; i < max_try; i++ {
+			time.Sleep(10 * time.Millisecond)
+			s.mu.Lock()
+
+			if element := s.idleInstance.Front(); element != nil {
+				s.waitingNum -= 1
+				instance := element.Value.(*model.Instance)
+				instance.Busy = true
+				s.idleInstance.Remove(element)
+				s.mu.Unlock()
+
+				instanceId = instance.Id
+				return &pb.AssignReply{
+					Status: pb.Status_Ok,
+					Assigment: &pb.Assignment{
+						RequestId:  request.RequestId,
+						MetaKey:    instance.Meta.Key,
+						InstanceId: instance.Id,
+					},
+					ErrorMessage: nil,
+				}, nil
+			}
+
+			s.mu.Unlock()
+		}
+
+		s.mu.Lock()
+		s.waitingNum -= 1
 	}
+
 	s.mu.Unlock()
 
 	//CreateSlot
@@ -128,51 +197,6 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 		log.Printf("create slot failed with: %s", err.Error())
 		return nil, status.Errorf(codes.Internal, errorMessage)
 	}
-
-	// // Try again
-	// s.mu.Lock()
-	// if element := s.idleInstance.Front(); element != nil {
-	// 	instance := element.Value.(*model.Instance)
-	// 	instance.Busy = true
-	// 	s.idleInstance.Remove(element)
-	// 	s.mu.Unlock()
-
-	// 	// Create A new Idle Instance
-	// 	defer func() {
-	// 		s.deleteSlot(ctx, request.RequestId, slot.Id, instanceId, request.MetaData.Key, "Try Again")
-	// 		// meta := &model.Meta{
-	// 		// 	Meta: pb.Meta{
-	// 		// 		Key:           request.MetaData.Key,
-	// 		// 		Runtime:       request.MetaData.Runtime,
-	// 		// 		TimeoutInSecs: request.MetaData.TimeoutInSecs,
-	// 		// 	},
-	// 		// }
-
-	// 		// instanceId := uuid.New().String()
-	// 		// new_instance, err := s.platformClient.Init(ctx, request.RequestId, instanceId, slot, meta)
-	// 		// if err != nil {
-	// 		// 	log.Printf("[Try Again]create instance failed with: %s", err.Error())
-	// 		// }
-
-	// 		// s.mu.Lock()
-	// 		// new_instance.Busy = false
-	// 		// s.idleInstance.PushFront(new_instance)
-	// 		// s.instances[new_instance.Id] = new_instance
-	// 		// s.mu.Unlock()
-	// 	}()
-
-	// 	instanceId = instance.Id
-	// 	return &pb.AssignReply{
-	// 		Status: pb.Status_Ok,
-	// 		Assigment: &pb.Assignment{
-	// 			RequestId:  request.RequestId,
-	// 			MetaKey:    instance.Meta.Key,
-	// 			InstanceId: instance.Id,
-	// 		},
-	// 		ErrorMessage: nil,
-	// 	}, nil
-	// }
-	// s.mu.Unlock()
 
 	// Init
 	meta := &model.Meta{
@@ -194,11 +218,11 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	instance.Busy = true
 	s.instances[instance.Id] = instance
 
-	s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
+	// s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
 
 	// Exec Times
-	start_time := time.Now()
-	s.startTime[instanceId] = &start_time
+	// start_time := time.Now()
+	// s.startTime[instanceId] = &start_time
 
 	s.mu.Unlock()
 
@@ -241,23 +265,13 @@ func (s *Simple) Idle(ctx context.Context, request *pb.IdleRequest) (*pb.IdleRep
 	s.mu.Lock()
 
 	// Exec Times
-	exe_time := time.Since(*s.startTime[instanceId]).Milliseconds()
-	s.executionDuration = s.executionDuration*0.2 + float32(exe_time)*0.8
-	// log.Printf("++++++++++ %s  %f ++++++++++++", s.metaData.Key, s.executionDuration)
+	// exe_time := time.Since(*s.startTime[instanceId]).Milliseconds()
+	// s.executionDurationInMs = s.executionDurationInMs*0.3 + float32(exe_time)*0.7
 
 	defer s.mu.Unlock()
 	if instance := s.instances[instanceId]; instance != nil {
 		slotId = instance.Slot.Id
 		instance.LastIdleTime = time.Now()
-
-		// Exec Times
-		// if s.executionDuration >= 1200 && instance.InitDurationInMs <= 200 || s.assignDuration > 1000*60*5 {
-		if s.executionDuration >= 1200 && instance.InitDurationInMs <= 200 && s.assignDuration > 1000*60 {
-			needDestroy = true
-			delete(s.instances, instanceId)
-			log.Printf("request id %s, instance %s need be destroy", request.Assigment.RequestId, instanceId)
-			return reply, nil
-		}
 
 		if needDestroy {
 			delete(s.instances, instanceId)
@@ -290,20 +304,31 @@ func (s *Simple) deleteSlot(ctx context.Context, requestId, slotId, instanceId, 
 
 func (s *Simple) gcLoop() {
 	log.Printf("gc loop for app: %s is started", s.metaData.Key)
+
+	interval := s.config.IdleDurationBeforeGC
+
+	if sec, ok := s.config.IntervalInSec[s.metaData.Key]; ok {
+		interval = time.Duration(sec) * time.Second
+	}
+
 	ticker := time.NewTicker(s.config.GcInterval)
+	// i := 0
 	for range ticker.C {
+		// i = (i + 1) % 10
+		// if i == 0 {
+		// 	log.Printf("--------------- %s %v ----------------", s.metaData.Key, s.Stats())
+		// }
 		for {
 			s.mu.Lock()
 			if element := s.idleInstance.Back(); element != nil {
 				instance := element.Value.(*model.Instance)
 				idleDuration := time.Since(instance.LastIdleTime)
-				if idleDuration > s.config.IdleDurationBeforeGC || s.idleInstance.Len() > 15 {
-					//need GC
+				if idleDuration > interval {
 					s.idleInstance.Remove(element)
 					delete(s.instances, instance.Id)
 					s.mu.Unlock()
-					// STOP  App  Instance  idleInstance.len  idleDuration
-					log.Printf("GcLoop      %s  %s  %d  %fs", instance.Meta.GetKey(), instance.Id[:8], s.idleInstance.Len(), idleDuration.Seconds())
+
+					log.Printf("GcLoop      %s  %s  %d  %fs %d", instance.Meta.GetKey(), instance.Id[:8], s.idleInstance.Len(), idleDuration.Seconds(), interval)
 					go func() {
 						reason := fmt.Sprintf("Idle duration: %fs, excceed configured duration: %fs", idleDuration.Seconds(), s.config.IdleDurationBeforeGC.Seconds())
 						ctx := context.Background()
