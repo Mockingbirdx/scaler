@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	// "sync/atomic" // Coldstart
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -44,6 +45,8 @@ type Simple struct {
 	waitingNum int
 	// Feature
 	feature *feature.AppFeature
+	// ColdStart
+	// coldStartNum int32
 	// Exec Times
 	// executionDurationInMs float32
 	// startTime             map[string]*time.Time
@@ -51,10 +54,6 @@ type Simple struct {
 	// Cycle
 	// cycle_mu   sync.Mutex
 	// cycle_time time.Time
-
-	// AssignTime
-	// assignDuration float32
-	// lastAssignTime time.Time
 }
 
 func New(metaData *model.Meta, config *config.Config) Scaler {
@@ -80,9 +79,6 @@ func New(metaData *model.Meta, config *config.Config) Scaler {
 		// Exec Times
 		// executionDurationInMs: 0,
 		// startTime:             make(map[string]*time.Time),
-		// AssignTime
-		// assignDuration: 0,
-		// lastAssignTime: time.Now(),
 	}
 	if scheduler.feature == nil {
 		scheduler.feature = &feature.AppFeature{
@@ -100,6 +96,11 @@ func New(metaData *model.Meta, config *config.Config) Scaler {
 		scheduler.gcLoop()
 		log.Printf("gc loop for app: %s is stoped", metaData.Key)
 	}()
+
+	if num, ok := config.ColdStartNum[metaData.Key]; ok {
+		go scheduler.PreAssignWithGroup(context.Background(), num)
+	}
+
 	return scheduler
 }
 
@@ -115,9 +116,6 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	}()
 
 	s.mu.Lock()
-	// AssignTime
-	// assign_duration := float32(time.Since(s.lastAssignTime).Milliseconds())
-	// s.lastAssignTime = start
 
 	// Cycle
 	// if app := feature.AppFeatures[request.MetaData.Key]; app != nil && app.CycleInSec > 0 {
@@ -125,7 +123,6 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	// }
 
 	if element := s.idleInstance.Front(); element != nil {
-		// s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
 		instance := element.Value.(*model.Instance)
 		instance.Busy = true
 		s.idleInstance.Remove(element)
@@ -145,13 +142,13 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 			},
 			ErrorMessage: nil,
 		}, nil
-	} else if (s.feature.ExecDurationInMs < s.feature.InitDurationInMs || s.feature.ExecDurationInMs < 100) &&
+	} else if ((s.feature.ExecDurationInMs < s.feature.InitDurationInMs*2) || s.feature.ExecDurationInMs < 400) &&
 		len(s.instances) > 0 && s.waitingNum < len(s.instances) && s.waitingNum < s.config.MaxWaitingNum {
 
 		s.waitingNum += 1
 		s.mu.Unlock()
 
-		max_try := int((s.feature.ExecDurationInMs / 10) + 1)
+		max_try := int((float32(s.feature.InitDurationInMs) + 100) / 10)
 		for i := 0; i < max_try; i++ {
 			time.Sleep(10 * time.Millisecond)
 			s.mu.Lock()
@@ -183,6 +180,9 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	}
 
 	s.mu.Unlock()
+
+	// Coldstart
+	// atomic.AddInt32(&s.coldStartNum, 1)
 
 	//CreateSlot
 	resourceConfig := model.SlotResourceConfig{
@@ -217,8 +217,6 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	s.mu.Lock()
 	instance.Busy = true
 	s.instances[instance.Id] = instance
-
-	// s.assignDuration = s.assignDuration*0.2 + assign_duration*0.8 // AssignTime
 
 	// Exec Times
 	// start_time := time.Now()
@@ -307,14 +305,16 @@ func (s *Simple) gcLoop() {
 
 	interval := s.config.IdleDurationBeforeGC
 
-	if sec, ok := s.config.IntervalInSec[s.metaData.Key]; ok {
+	var ok bool
+	var sec int
+	if sec, ok = s.config.IntervalInSec[s.metaData.Key]; ok {
 		interval = time.Duration(sec) * time.Second
 	}
 
 	ticker := time.NewTicker(s.config.GcInterval)
 	// i := 0
 	for range ticker.C {
-		// i = (i + 1) % 10
+		// i = (i + 1) % 5
 		// if i == 0 {
 		// 	log.Printf("--------------- %s %v ----------------", s.metaData.Key, s.Stats())
 		// }
@@ -323,7 +323,7 @@ func (s *Simple) gcLoop() {
 			if element := s.idleInstance.Back(); element != nil {
 				instance := element.Value.(*model.Instance)
 				idleDuration := time.Since(instance.LastIdleTime)
-				if idleDuration > interval {
+				if idleDuration > interval || (!ok && (s.idleInstance.Len() > 10 || s.metaData.MemoryInMb > 2048)) {
 					s.idleInstance.Remove(element)
 					delete(s.instances, instance.Id)
 					s.mu.Unlock()
@@ -343,6 +343,12 @@ func (s *Simple) gcLoop() {
 			s.mu.Unlock()
 			break
 		}
+		// Coldstart
+		// coldStartNum := atomic.LoadInt32(&s.coldStartNum)
+		// if coldStartNum > 30 {
+		// 	go s.PreAssign(context.Background())
+		// }
+		// atomic.StoreInt32(&s.coldStartNum, 0)
 	}
 }
 

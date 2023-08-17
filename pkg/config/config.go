@@ -1,5 +1,5 @@
 /*
-Copyright 2023 The Alibaba Cloud Serverless Authors.
+Copyright 3023 The Alibaba Cloud Serverless Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -22,11 +22,12 @@ type Config struct {
 	MaxWaitingNum        int
 	UseFeature           bool
 	IntervalInSec        map[string]int
+	ColdStartNum         map[string]int
 }
 
 var DefaultConfig = Config{
 	ClientAddr:           "127.0.0.1:50051",
-	GcInterval:           900 * time.Millisecond,
+	GcInterval:           1 * time.Millisecond,
 	IdleDurationBeforeGC: 9 * time.Second,
 	MaxWaitingNum:        3,
 	UseFeature:           false,
@@ -40,5 +41,15 @@ var DefaultConfig = Config{
 		"roles2":                      300,
 		"rolebindings2":               300,
 		"certificatesigningrequests2": 300,
+		"binding2":                    300,
+	},
+	ColdStartNum: map[string]int{
+		"roles1":                      5,
+		"rolebindings1":               5,
+		"certificatesigningrequests1": 5,
+		"roles2":                      5,
+		"rolebindings2":               5,
+		"certificatesigningrequests2": 5,
+		"binding2":                    5,
 	},
 }

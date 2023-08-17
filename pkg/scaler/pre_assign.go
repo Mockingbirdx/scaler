@@ -15,10 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func (s *Simple) PreAssign(ctx context.Context, sleep_duration time.Duration) error {
-	// sleep
-	time.Sleep(sleep_duration)
-
+func (s *Simple) PreAssign(ctx context.Context) error {
 	// START 调度 App Request
 	log.Printf("Assign      %s [PreAssign]", s.metaData.GetKey())
 
@@ -63,6 +60,22 @@ func (s *Simple) PreAssign(ctx context.Context, sleep_duration time.Duration) er
 	s.mu.Unlock()
 
 	return nil
+}
+
+func (s *Simple) PreAssignWithGroup(ctx context.Context, groupNum int) {
+	if groupNum <= 0 {
+		return
+	}
+	for i := 0; i < groupNum; i++ {
+		go s.PreAssign(ctx)
+	}
+}
+
+func (s *Simple) PreAssignWithInterval(ctx context.Context, sleep_duration time.Duration) error {
+	// sleep
+	time.Sleep(sleep_duration)
+
+	return s.PreAssign(ctx)
 }
 
 // func (s *Simple) Cycle(ctx context.Context, app *feature.App) {
