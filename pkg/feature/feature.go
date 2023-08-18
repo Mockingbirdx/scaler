@@ -9,8 +9,8 @@ import (
 
 type AppFeature struct {
 	Key              string `json:"Key"`
-	ExecDurationInMs int32  `json:"ExecDurationInMs"`
-	InitDurationInMs int32  `json:"InitDurationInMs"`
+	ExecDurationInMs int64  `json:"ExecDurationInMs"`
+	InitDurationInMs int64  `json:"InitDurationInMs"`
 	CycleInSec       int32  `json:"CycleInSec"`
 	TermInSec        int32  `json:"TermInSec"`
 }

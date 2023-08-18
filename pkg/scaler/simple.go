@@ -83,22 +83,28 @@ func New(metaData *model.Meta, config *config.Config) Scaler {
 	if scheduler.feature == nil {
 		scheduler.feature = &feature.AppFeature{
 			Key:              metaData.Key,
-			ExecDurationInMs: 0,
-			InitDurationInMs: 0,
+			ExecDurationInMs: 1000,
+			InitDurationInMs: 1000,
 			CycleInSec:       0,
 			TermInSec:        0,
 		}
 	}
 	log.Printf("New         %s %d %d %s", metaData.GetKey(), metaData.GetMemoryInMb(), metaData.GetTimeoutInSecs(), metaData.GetRuntime())
 	scheduler.wg.Add(1)
-	go func() {
-		defer scheduler.wg.Done()
-		scheduler.gcLoop()
-		log.Printf("gc loop for app: %s is stoped", metaData.Key)
-	}()
 
 	if num, ok := config.ColdStartNum[metaData.Key]; ok {
 		go scheduler.PreAssignWithGroup(context.Background(), num)
+		go func() {
+			defer scheduler.wg.Done()
+			scheduler.gcLoopForColdStartInstance()
+			log.Printf("gc loop for app: %s is stoped", metaData.Key)
+		}()
+	} else {
+		go func() {
+			defer scheduler.wg.Done()
+			scheduler.gcLoop()
+			log.Printf("gc loop for app: %s is stoped", metaData.Key)
+		}()
 	}
 
 	return scheduler
@@ -142,13 +148,19 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 			},
 			ErrorMessage: nil,
 		}, nil
-	} else if ((s.feature.ExecDurationInMs < s.feature.InitDurationInMs*2) || s.feature.ExecDurationInMs < 400) &&
-		len(s.instances) > 0 && s.waitingNum < len(s.instances) && s.waitingNum < s.config.MaxWaitingNum {
+	} else if
+	// s.waitingNum < len(s.instances) &&
+	// (s.feature.ExecDurationInMs < 100 ||
+	// 	s.feature.ExecDurationInMs < s.feature.InitDurationInMs+100 && s.waitingNum < 3 ||
+	// 	s.feature.ExecDurationInMs < s.feature.InitDurationInMs*3 && s.waitingNum < 1) {
+	((s.feature.ExecDurationInMs < s.feature.InitDurationInMs+100) || s.feature.ExecDurationInMs < 400) &&
+		s.waitingNum < s.config.MaxWaitingNum &&
+		s.waitingNum < len(s.instances) {
 
 		s.waitingNum += 1
 		s.mu.Unlock()
 
-		max_try := int((float32(s.feature.InitDurationInMs) + 100) / 10)
+		max_try := int((float32(s.feature.InitDurationInMs))/10) + 10
 		for i := 0; i < max_try; i++ {
 			time.Sleep(10 * time.Millisecond)
 			s.mu.Lock()
@@ -217,6 +229,7 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 	s.mu.Lock()
 	instance.Busy = true
 	s.instances[instance.Id] = instance
+	s.feature.InitDurationInMs = instance.InitDurationInMs
 
 	// Exec Times
 	// start_time := time.Now()
@@ -265,6 +278,7 @@ func (s *Simple) Idle(ctx context.Context, request *pb.IdleRequest) (*pb.IdleRep
 	// Exec Times
 	// exe_time := time.Since(*s.startTime[instanceId]).Milliseconds()
 	// s.executionDurationInMs = s.executionDurationInMs*0.3 + float32(exe_time)*0.7
+	s.feature.ExecDurationInMs = int64((s.feature.ExecDurationInMs + int64(request.Result.DurationInMs)) / 2)
 
 	defer s.mu.Unlock()
 	if instance := s.instances[instanceId]; instance != nil {
@@ -305,9 +319,42 @@ func (s *Simple) gcLoop() {
 
 	interval := s.config.IdleDurationBeforeGC
 
-	var ok bool
-	var sec int
-	if sec, ok = s.config.IntervalInSec[s.metaData.Key]; ok {
+	ticker := time.NewTicker(s.config.GcInterval)
+	for range ticker.C {
+		for {
+			s.mu.Lock()
+			if element := s.idleInstance.Back(); element != nil {
+				instance := element.Value.(*model.Instance)
+				idleDuration := time.Since(instance.LastIdleTime)
+				if idleDuration > interval || s.idleInstance.Len() > 10 || (s.metaData.MemoryInMb > 2048 && s.idleInstance.Len() > 1) {
+					s.idleInstance.Remove(element)
+					delete(s.instances, instance.Id)
+					s.mu.Unlock()
+
+					log.Printf("GcLoop      %s  %s  %d  %fs %d", instance.Meta.GetKey(), instance.Id[:8], s.idleInstance.Len(), idleDuration.Seconds(), interval)
+					go func() {
+						reason := fmt.Sprintf("Idle duration: %fs, excceed configured duration: %fs", idleDuration.Seconds(), s.config.IdleDurationBeforeGC.Seconds())
+						ctx := context.Background()
+						ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+						defer cancel()
+						s.deleteSlot(ctx, uuid.NewString(), instance.Slot.Id, instance.Id, instance.Meta.Key, reason)
+					}()
+
+					continue
+				}
+			}
+			s.mu.Unlock()
+			break
+		}
+	}
+}
+
+func (s *Simple) gcLoopForColdStartInstance() {
+	log.Printf("gc loop for app: %s is started", s.metaData.Key)
+
+	interval := s.config.IdleDurationBeforeGC
+
+	if sec, ok := s.config.IntervalInSec[s.metaData.Key]; ok {
 		interval = time.Duration(sec) * time.Second
 	}
 
@@ -323,7 +370,7 @@ func (s *Simple) gcLoop() {
 			if element := s.idleInstance.Back(); element != nil {
 				instance := element.Value.(*model.Instance)
 				idleDuration := time.Since(instance.LastIdleTime)
-				if idleDuration > interval || (!ok && (s.idleInstance.Len() > 10 || s.metaData.MemoryInMb > 2048)) {
+				if idleDuration > interval {
 					s.idleInstance.Remove(element)
 					delete(s.instances, instance.Id)
 					s.mu.Unlock()
