@@ -326,7 +326,7 @@ func (s *Simple) gcLoop() {
 			if element := s.idleInstance.Back(); element != nil {
 				instance := element.Value.(*model.Instance)
 				idleDuration := time.Since(instance.LastIdleTime)
-				if idleDuration > interval || s.idleInstance.Len() > 10 || (s.metaData.MemoryInMb > 2048 && s.idleInstance.Len() > 1) {
+				if idleDuration > interval || s.idleInstance.Len() > 10 || (s.metaData.MemoryInMb >= 2048 && s.idleInstance.Len() > 1) {
 					s.idleInstance.Remove(element)
 					delete(s.instances, instance.Id)
 					s.mu.Unlock()
