@@ -160,7 +160,13 @@ func (s *Simple) Assign(ctx context.Context, request *pb.AssignRequest) (*pb.Ass
 		s.waitingNum += 1
 		s.mu.Unlock()
 
-		max_try := int((float32(s.feature.InitDurationInMs))/10) + 10
+		var max_try int
+		if s.feature.ExecDurationInMs < s.feature.InitDurationInMs+100 {
+			max_try = int((float32(s.feature.InitDurationInMs))/10) + 20
+		} else {
+			max_try = int(s.feature.ExecDurationInMs) + 20
+		}
+
 		for i := 0; i < max_try; i++ {
 			time.Sleep(10 * time.Millisecond)
 			s.mu.Lock()

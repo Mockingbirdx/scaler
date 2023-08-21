@@ -20,7 +20,6 @@ type Config struct {
 	GcInterval           time.Duration
 	IdleDurationBeforeGC time.Duration
 	MaxWaitingNum        int
-	UseFeature           bool
 	IntervalInSec        map[string]int
 	ColdStartNum         map[string]int
 }
@@ -30,13 +29,12 @@ var DefaultConfig = Config{
 	GcInterval:           1 * time.Second,
 	IdleDurationBeforeGC: 9 * time.Second,
 	MaxWaitingNum:        3,
-	UseFeature:           false,
 	IntervalInSec: map[string]int{
-		"nodes1":                      37,
-		"roles1":                      200,
-		"rolebindings1":               200,
-		"certificatesigningrequests1": 200,
-		"csinodes1":                   10,
+		"nodes1":                      5,
+		"roles1":                      120,
+		"rolebindings1":               120,
+		"certificatesigningrequests1": 120,
+		"csinodes1":                   5,
 		"nodes2":                      37,
 		"roles2":                      200,
 		"rolebindings2":               200,
@@ -45,14 +43,14 @@ var DefaultConfig = Config{
 	},
 	ColdStartNum: map[string]int{
 		"nodes1":                      5,
-		"roles1":                      8,
-		"rolebindings1":               8,
-		"certificatesigningrequests1": 8,
+		"roles1":                      7,
+		"rolebindings1":               7,
+		"certificatesigningrequests1": 7,
 		"csinodes1":                   5,
 		"nodes2":                      5,
-		"roles2":                      8,
-		"rolebindings2":               8,
-		"certificatesigningrequests2": 8,
-		"binding2":                    8,
+		"roles2":                      7,
+		"rolebindings2":               7,
+		"certificatesigningrequests2": 7,
+		"binding2":                    7,
 	},
 }
